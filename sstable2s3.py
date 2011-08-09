@@ -25,65 +25,17 @@ import sqlite3
 import zlib
 import binascii
 
-MP_CHUNK_READ = 100663296 # 96MB
+MP_CHUNK_READ = 268435456 # 256MB
 CRC_INIT = zlib.crc32("") & 0xffffffffL
+MAX_THREADS = 5
 
 def write32u(output, value):
   output.write(struct.pack("<L", value))
-
-class StreamCompressorOld:
-  
-  def __init__(self, filename, mode='rb', compresslevel=6, crc=CRC_INIT, sz=0):
-    self.fileobj = open(filename, mode)
-    self.compresslevel = compresslevel
-    self.compressor = False
-    # self.compressor = zlib.compressobj(compresslevel)
-    self.crc = crc
-    self.sz = sz
-    
-  def read(self, size=None):
-    # read data
-    if not self.compressor:
-      self.compressor = zlib.compressobj(self.compresslevel, zlib.DEFLATED, -zlib.MAX_WBITS, zlib.DEF_MEM_LEVEL, 0)
-    try:
-      if size == None:
-        fdata = self.fileobj.read()
-      else:
-        fdata = self.fileobj.read(size)
-    finally:
-      z_data = self.compressor.compress(fdata)
-      self.crc = zlib.crc32(fdata, self.crc) & 0xffffffffL
-      self.sz = self.sz + len(fdata)
-      fz_data = self.finish()
-    return z_data + fz_data
-      
-  def finish(self):
-    return self.flush()
-
-  def flush(self):
-    fz_data = ''
-    # fz_data = self.compressor.flush(zlib.Z_FULL_FLUSH);
-    if self.compressor:
-      fz_data = self.compressor.flush(zlib.Z_FULL_FLUSH);
-    # self.compressor = False
-    return fz_data
-
-  def seek(self, offset):
-    # seeks should reset the compressor as anything returned so far is invalid
-    self.fileobj.seek(offset)
-    # if self.compressor, then seek should error
-
-  def tell(self):
-    return self.fileobj.tell()
-
-  # def close(self):
-    # perform a Z_FULL_FLUSH so that this everything read so far can be 
 
 class StreamCompressor:
   
   def __init__(self, compress_level=6):
     self.compressLevel = compress_level
-#     self.stream = io.BytesIO()
     self.compressor = False
     self.size = 0
     self.crc = CRC_INIT
@@ -93,8 +45,6 @@ class StreamCompressor:
       self.compressor = zlib.compressobj(self.compressLevel, zlib.DEFLATED, -zlib.MAX_WBITS, zlib.DEF_MEM_LEVEL, 0)
       self.size = 0
       self.crc = CRC_INIT
-#     self.stream.seek(0, SEEK_END)
-#     self.stream.write(self.compressor.compress(b))
     zd = self.compressor.compress(b)
     self.size = self.size + len(b)
     self.crc = zlib.crc32(b, self.crc) & 0xffffffffL
@@ -104,8 +54,6 @@ class StreamCompressor:
     zd = ''
     if self.compressor:
       zd = self.compressor.flush(zlib.Z_FULL_FLUSH);
-#     self.stream.seek(0, SEEK_END)
-#     self.stream.write(zd)
     return zd
     
   def close(self):
@@ -194,13 +142,15 @@ class zlib_crc32():
 #       h = h + fname + '\000'
 #     return h
 #   
-#   def single_footer(self)
+#   def single_footer(self):
 #   
-#   def parts_footer(self)
+#   def parts_footer(self):
+#
+#   def computeCRC(self):
 # 
 
 class MultiPartFileUploader():
-  def __init__(self, filepath, bucket_name, key_name, aws_key, aws_secret, sqlite):
+  def __init__(self, filepath, bucket_name, key_name, aws_key, aws_secret, sqlite, chunk_size=MP_CHUNK_READ):
     self.filepath = filepath
     self.fstats = os.stat(filepath)
     self.key_name = key_name
@@ -215,6 +165,7 @@ class MultiPartFileUploader():
       self.mpu = self.bucket_obj.initiate_multipart_upload(key_name)
     self.sqlite = sqlite
     self.sqlite_connection = sqlite3.connect(sqlite)
+    self.chunk_size = chunk_size
     
   def checkExistingMPU(self):
     multipart_uploads = self.bucket_obj.list_multipart_uploads()
@@ -226,32 +177,35 @@ class MultiPartFileUploader():
   def getMissingParts(self):
     # stat the file size so we know how many parts we need
     file_size = self.fstats.st_size
-    self.part_count = int(max(math.ceil(file_size / float(MP_CHUNK_READ)), 1))
+    self.part_count = int(max(math.ceil(file_size / float(self.chunk_size)), 1))
     self.missing_part_ids = range(1,self.part_count+1)
-    for part in self.mpu.__iter__():
-      self.missing_part_ids.remove(part.part_number)
+    for uploaded_part in self.mpu.__iter__():
+      sys.stderr.write(time.asctime() + ": " + self.key_name + " part " + str(uploaded_part.part_number) + " already uploaded with size " + str(uploaded_part.size) + "bytes\n")
+      self.missing_part_ids.remove(uploaded_part.part_number)
     return self.missing_part_ids
   
   def uploadPart(self, part_number):
-    # TODO -eventually uplaod using set_contents_from_stream rather than storing the whole part in memory
+    # TODO -eventually upload using set_contents_from_stream rather than storing the whole part in memory
     d = io.BytesIO()
-    #open the file
     with open(self.filepath, 'rb') as infd:
       # seek to position
-      infd.seek((part_number-1)*MP_CHUNK_READ)
-      bytes_remaining = MP_CHUNK_READ
+      infd.seek((part_number-1)*self.chunk_size)
+      bytes_remaining = self.chunk_size
       while bytes_remaining:
         bytes_to_read = min(bytes_remaining, 65536)
         # read data into buffer
         fdata = infd.read(bytes_to_read)
         bytes_remaining -= bytes_to_read
         d.write(fdata)
-        # incrementally calculate crc
     self.mpu.upload_part_from_file(d, part_number)
     d.close()
   
   def uploadPartGz(self, part_number):
-    sc = StreamCompressor()
+    # Filter.db files compress TOO well sometimes for the default 256MB chunk size and can be smaller than the 5MB minimum part size
+    if ('Filter.db' in self.key_name):
+      sc = StreamCompressor(1)
+    else:
+      sc = StreamCompressor()
     d = io.BytesIO()
     # if it's the first part, let's write the gz header out
     if (part_number == 1):
@@ -272,18 +226,17 @@ class MultiPartFileUploader():
     # then write out the gz data    
     with open(self.filepath, 'rb') as infd:
       # seek to position
-      seek_position = (part_number-1)*MP_CHUNK_READ
+      seek_position = (part_number-1)*self.chunk_size
       infd.seek(seek_position)
-      bytes_remaining = min(MP_CHUNK_READ, (self.fstats.st_size - seek_position))
+      bytes_remaining = min(self.chunk_size, (self.fstats.st_size - seek_position))
       while bytes_remaining:
         bytes_to_read = min(bytes_remaining, 65536)
         # read data into buffer
         fdata = d.write(sc.write(infd.read(bytes_to_read)))
         bytes_remaining -= bytes_to_read
-        # incrementally calculate crc
       # flush out any remaining data from the compressor
       d.write(sc.flush())
-      # save the crc and original chunk size for this part
+      # persist the crc and original chunk size for this part
       crc = sc.crc
       size = sc.size
       c = self.sqlite_connection.cursor()
@@ -300,7 +253,6 @@ class MultiPartFileUploader():
       write32u(d, self.fstats.st_size & 0xffffffffL)
     
     # upload the part now
-    print "uploading " + self.key_name + " with data of length " # + str(len(d))
     upload_response = self.mpu.upload_part_from_file(d, part_number)
     d.close()
   
@@ -316,23 +268,20 @@ class MultiPartFileUploader():
       pn = row[0]
       _crc = struct.unpack('>L', binascii.unhexlify(row[1].zfill(8)))[0]
       _size = row[2]
-      crc = zlib_crc32.crc32_combine(crc, _crc, _size)
-      
+      crc = zlib_crc32.crc32_combine(crc, _crc, _size)      
     # if (len(crc_list) != len(size_list): # throw some sort of error
-#     for _crc, _size in zip(crc_list, size_list):
-#       crc = zlib_crc32.crc32_combine(crc, _crc, _size)
-#     print '0x%08x' % crc
     return crc
     
   def startUpload(self):
     # check which parts have already been uploaded
     missing_part_ids = self.getMissingParts()
     for part_num in missing_part_ids:
-      print "Uploading part " + str(part_num) + " for " + self.key_name
+      sys.stderr.write(time.asctime() + ": Buffering part " + str(part_num) + "/" + str(self.part_count) + " for " + self.key_name + "\n")
       if self.key_name.endswith('.gz'):
         self.uploadPartGz(part_num)
       else:
         self.uploadPart(part_num)
+      sys.stderr.write(time.asctime() + ": COMPLETED uploading part " + str(part_num) + "/" + str(self.part_count) + " for " + self.key_name + "\n")
     self.mpu.complete_upload()
 
 class SSTable2S3(object):
@@ -341,17 +290,14 @@ class SSTable2S3(object):
     self.aws_key = aws_key
     self.aws_secret = aws_secret
     self.bucket = bucket
+    # remove a trailing slash if it exists
+    if key_prefix[-1:] == "/":
+      key_prefix = key_prefix[0:-1]
     self.key_prefix = key_prefix
     self.connection = boto.connect_s3(self.aws_key, self.aws_secret)
     self.bucket_obj = self.connection.get_bucket(bucket)
     self.init_sqlite(sqlite)
 
-#     multipart_uploads = self.bucket_obj.list_multipart_uploads()
-#     for mpu in multipart_uploads:
-#       print repr(mpu.get_all_parts())
-#       for p in mpu.__iter__():
-#         print str(p.part_number) + " : " + str(p.size) + "bytes"
-#       # mpu.cancel_upload()
   
   def init_sqlite(self, sqlite):
     self.sqlite = sqlite
@@ -360,34 +306,43 @@ class SSTable2S3(object):
     c.execute('''CREATE TABLE IF NOT EXISTS multipartuploads (key_name text, part_number integer, crc text, size integer, PRIMARY KEY (key_name, part_number))''')
     self.sqlite_connection.commit()
 
+  def cancel_pending_uploads(self):
+    multipart_uploads = self.bucket_obj.list_multipart_uploads()
+    sys.stderr.write("Canceling outstanding multipart uploads\n")
+    for mpu in multipart_uploads:
+      if (self.key_prefix in mpu.key_name): # don't want to clobber things we shouldn't be handling
+        sys.stderr.write("Canceling multipart upload for " + mpu.key_name + "\n")
+        mpu.cancel_upload()
+    sys.stderr.write("COMPLETED canceling outstanding multipart uploads\n")
+    time.sleep(5)
+
+
   def sync_to_bucketPath(self, path):
-    # create a timestamped manifest file
-    print "preparing file manifest"
     manifest = self.createPathManifest(path)
-    print str(len(manifest)) + " files in manifest"
-    # TODO upload the manifest file
-    # list each file in the path
-    # foreach file, check S3 - thread at this point
+    manifest.sort()
+    sys.stderr.write(str(len(manifest)) + " files in manifest\n")
+    ts = time.time()
+    key = self.bucket_obj.new_key('%s/manifests/%s-%s.manifest.json' % (self.key_prefix, socket.getfqdn(), ts))
+    key.set_contents_from_string(json.dumps({'files': manifest, 'path': path, 'prefix': self.key_prefix, 'hostname': socket.getfqdn(), 'timestamp': ts}))
     threadlist = []
     for f in manifest:
       while True:
-        if threading.activeCount() < 5:
-          self.thread_wait = 0.03125;
-          print "starting new thread for " + f + " with " + str(threading.activeCount()) + " threads running"
+        if threading.activeCount() < MAX_THREADS:
+          self.thread_wait = 0.015625
+          # sys.stderr.write("starting new thread for " + f + " with " + str(threading.activeCount()) + "/" + str(MAX_THREADS) + " threads running\n")
           t = Thread(target=self.syncFileS3, args=(path, f))
           t.setDaemon(True)
           t.start()
           threadlist.append(t)
           break
         else:
-          print "sleeping for " + str(self.thread_wait) + " seconds with " + str(threading.activeCount()) + " threads running"
+          # sys.stderr.write("sleeping for " + str(self.thread_wait) + " seconds with " + str(threading.activeCount()) + "/" + str(MAX_THREADS) + " threads running\n")
           self.thread_wait = min(self.thread_wait * 2, 60);
           time.sleep(self.thread_wait)
     for t in threadlist:
       t.join()
 
   def syncFileS3(self, pathhead, pathtail):
-    # compare md5 or ts
     filepath = os.path.join(pathhead, pathtail)
     if self.key_prefix.endswith('/'):
       keyname = self.key_prefix + pathtail + '.gz'
@@ -405,45 +360,25 @@ class SSTable2S3(object):
       local_size = local_fstat.st_size
       # if local_datetime >= s3_datetime or s3_size != local_size:
       if local_datetime >= s3_datetime:
-        print "starting upload - key " + keyname + " : incorrect filesize match or older timestamp in S3"
         self.uploadFileS3(filepath, keyname, True)
-      else:
-        print "skipping upload - key " + keyname + " ts and size match in S3"
     else:
-      print "starting upload - key " + keyname + " does not exist yet in S3"
       self.uploadFileS3(filepath, keyname, True)    
 
   def uploadFileS3(self, filepath, keyname, replace=False):
-    def progress(sent, total):
-      if sent == total:
-        print 'Finished uploading ' + filepath + ' to ' + keyname
-    
     file_size = os.stat(filepath).st_size
+
+    # Filter.db files GZip TOO well. Upload as a single gz, not multipart upload or S3 will complain the parts are too small
+    if ('Filter.db' in filepath):
+      chunk_size = file_size
+    else:
+      chunk_size = MP_CHUNK_READ
+    parts = int(max(math.ceil(file_size / float(chunk_size)), 1))
     
-    parts = int(max(math.ceil(file_size / float(MP_CHUNK_READ)), 1))
-    part_num = 0
-
-    print "Uploading " + filepath + " using MULTI upload in " + str(parts) + " parts"
+    sys.stderr.write(time.asctime() + ": Starting upload of " + filepath + " with " + str(parts) + " parts\n")
     start_time = time.clock()
-    mpfu = MultiPartFileUploader(filepath, self.bucket, keyname, self.aws_key, self.aws_secret, self.sqlite)
+    mpfu = MultiPartFileUploader(filepath, self.bucket, keyname, self.aws_key, self.aws_secret, self.sqlite, chunk_size)
     mpfu.startUpload()
-    print 'Finished uploading ' + filepath + ' to ' + keyname + 'using MULTI upload in ' + str(start_time - time.clock()) + 's'
-
-#     if file_size > MP_CHUNK_READ:
-#       parts = math.ceil(file_size / MP_CHUNK_READ)
-#       part_num = 0
-#       # upload 5MB chunks to S3 in 
-#       print "Uploading " + filepath + " using MULTI upload in " + str(parts) + " parts"
-#       start_time = time.clock()
-#       mpfu = MultiPartFileUploader(filepath, self.bucket, keyname, self.aws_key, self.aws_secret, self.sqlite)
-#       mpfu.startUpload()
-#       print 'Finished uploading ' + filepath + ' to ' + keyname + 'using MULTI upload in ' + str(start_time - time.clock()) + 's'
-#     else:
-#       print "Uploading " + filepath + " using single upload"
-#       connection = boto.connect_s3(self.aws_key, self.aws_secret)
-#       bucket_obj = connection.get_bucket(self.bucket)
-#       key = bucket_obj.new_key(keyname)
-#       key.set_contents_from_filename(filepath, replace=replace, cb=progress)
+    sys.stderr.write(time.asctime() + ": Finished upload of " + filepath + " with " + str(parts) + " parts\n")
 
   def createPathManifest(self, filepath):
     lsr = self.listFiles(filepath)
