@@ -61,8 +61,10 @@ class StreamCompressorOld:
     return self.flush()
 
   def flush(self):
+    fz_data = ''
     # fz_data = self.compressor.flush(zlib.Z_FULL_FLUSH);
-    fz_data = self.compressor.flush(zlib.Z_FULL_FLUSH);
+    if self.compressor:
+      fz_data = self.compressor.flush(zlib.Z_FULL_FLUSH);
     # self.compressor = False
     return fz_data
 
@@ -99,7 +101,9 @@ class StreamCompressor:
     return zd
   
   def flush(self):
-    zd = self.compressor.flush(zlib.Z_FULL_FLUSH);
+    zd = ''
+    if self.compressor:
+      zd = self.compressor.flush(zlib.Z_FULL_FLUSH);
 #     self.stream.seek(0, SEEK_END)
 #     self.stream.write(zd)
     return zd
