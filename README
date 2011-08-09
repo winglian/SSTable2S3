@@ -1,0 +1,7 @@
+Backup your Cassandra SSTables to S3
+
+Multithreaded to upload multiple files simultaneously.
+Uses Multipart Uploads to handle large files to handle resuming.
+GZips tables on the fly so extra disk space is not required to upload.
+
+TODO: Parallelize uploading parts of the same file.
