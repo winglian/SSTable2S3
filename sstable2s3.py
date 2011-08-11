@@ -282,7 +282,12 @@ class MultiPartFileUploader():
       else:
         self.uploadPart(part_num)
       sys.stderr.write(time.asctime() + ": COMPLETED uploading part " + str(part_num) + "/" + str(self.part_count) + " for " + self.key_name + "\n")
-    self.mpu.complete_upload()
+    # recheck all the parts again before completing the upload
+    missing_part_ids2 = self.getMissingParts()
+    if len(missing_part_ids2)==0:
+      self.mpu.complete_upload()
+    else:
+      sys.stderr.write(time.asctime() + ": INCOMPLETE upload due to missing parts for " + self.key_name + ", retry the next time around\n")
 
 class SSTable2S3(object):
 
