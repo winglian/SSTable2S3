@@ -40,6 +40,21 @@ class StreamCompressor:
     self.size = 0
     self.crc = CRC_INIT
   
+class StreamDecompressor:
+  def __init__(self, filepath):
+    self.decompressor = False
+    self.file_obj = open(filepath, 'w')
+  
+  def write(self, b):
+    if not self.decompressor:
+      self.decompressor = zlib.decompressobj(16+zlib.MAX_WBITS)
+    fd = self.decompressor.decompress(b)
+    self.file_obj.write(fd)
+  
+  def close(self):
+    fd = self.decompressor.flush()
+    self.file_obj.write(fd)
+    self.file_obj.close()
 
 class zlib_crc32():
 
@@ -400,3 +415,12 @@ class SSTableS3(object):
     key_obj = self.bucket_obj.get_key(manifest)
     manifest_contents = json.loads(key_obj.get_contents_as_string())
     return manifest_contents
+    
+  def downloadGzipFile(self, key, filepath):
+    key_obj = self.bucket_obj.get_key(key)
+    # decompression obj
+    d = StreamDecompressor(filepath)
+    key_obj.get_contents_to_file(d)
+    d.close()
+    
+    

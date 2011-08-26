@@ -23,6 +23,7 @@ import pickle
 import sqlite3
 import zlib
 import binascii
+import re
 from sstables3 import *
 
 CRC_INIT = zlib.crc32("") & 0xffffffffL
@@ -39,6 +40,7 @@ def main():
 
   aws_key = options.aws_key
   aws_secret = options.aws_secret
+  restore_compacted = options.restore_compacted
 
   if len(args) >= 2:
     bucket = args[0]
@@ -56,13 +58,15 @@ def main():
     # echo out the manifest file listings
     return -1
 
+  if len(args) < 4:
+    parser.print_help()
+    return -1
 
   manifest = args[2]
-  path = args[3]
-  sqlite = args[4]
+  target_path = args[3]
   
   wrapper = SSTableS3(aws_key, aws_secret, bucket, prefix)
-  local_filelist = wrapper.createPathManifest(path)
+  local_filelist = wrapper.createPathManifest(target_path)
   
   # download the requested manifest from s3
   manifest_data = wrapper.getManifest(manifest)
@@ -77,23 +81,49 @@ def main():
       str_idx = _filename.rfind('-Compacted')
       compacted_list.append(_filename[0:str_idx+1])
 
-  # now loop through the compacted file prefixes and remove all the files related to the campacted sstables
-  filtered_files = manifest_files
-  for _filename in manifest_files:
-    for file_prefix in compacted_list:
-      if file_prefix in _filename:
-        print 'found ' + file_prefix + ' in ' + _filename
-        filtered_files.remove(_filename)
-        break
-      else:
-        print 'NOT found ' + file_prefix + ' in ' + _filename
-  print repr(manifest_files)
-      
-  # prompt the user which manifest to restore
-  # prompt the user if they want to restore the compacted files too (save time by skipping them)
+  
+  filtered_files = []
+  
+  if (restore_compacted == True):
+    filtered_files = manifest_files
+  else:
+    # now loop through the compacted file prefixes and remove all the files related to the campacted sstables
+    for _filename in manifest_files:
+      found_match = False
+      for file_prefix in compacted_list:
+        if file_prefix in _filename:
+          found_match = True
+          break
+      if not found_match:
+        filtered_files.append(_filename)
+  
+  paths = []
+  for _filename in filtered_files:
+    # strip filename to last slash '/'
+    last_slash_idx = _filename.rfind('/')
+    _path = _filename[0:last_slash_idx]
+    if _path not in paths:
+      paths.append(_path)
+  
   # create the appropriate final directory structure
-  # for each file in the manifest, break it down for each sstable and determine if there is a compacted file for it
+  for _path in paths:
+    fullpath = os.path.join(target_path, _path)
+    if not os.path.exists(fullpath):
+      os.makedirs(fullpath)
+  
+  
   # see what files already exist locally in the path
+  for _filename in filtered_files:
+    fullpath = os.path.join(target_path, _filename)
+    if os.path.exists(fullpath):
+      print fullpath + ' already exists.. .skipping'
+    else:
+      print 'downloading ' + _filename + ' to ' + fullpath
+      key = prefix
+      if not prefix.endswith('/'):
+        key = key + '/'
+      key = key + _filename + '.gz'
+      wrapper.downloadGzipFile(key, fullpath)
   # copy down each file to a tmp directory
   # gunzip each file into the appropriate directories
   # set the correct permissions
