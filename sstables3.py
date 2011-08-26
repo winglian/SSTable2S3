@@ -1,12 +1,31 @@
-import zlib
 import boto
-import os
+from threading import Thread
+from optparse import OptionParser
+from StringIO import StringIO
+import struct
+import resource
+import logging
+import os.path
+import socket
 import json
+import sys
+import os
+import time
+import threading
+import datetime
+import math
+import mimetypes
+import hashlib
+import io
+import pickle
+import sqlite3
+import zlib
+import binascii
 
 
 MP_CHUNK_READ = 268435456 # 256MB
 MAX_THREADS = 5
-
+CRC_INIT = zlib.crc32("") & 0xffffffffL
 
 def write32u(output, value):
   output.write(struct.pack("<L", value))

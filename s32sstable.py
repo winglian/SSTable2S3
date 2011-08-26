@@ -26,7 +26,6 @@ import binascii
 import re
 from sstables3 import *
 
-CRC_INIT = zlib.crc32("") & 0xffffffffL
 
 def main():
   # fix for http://bugs.python.org/issue7980 with strptime

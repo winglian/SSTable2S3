@@ -24,10 +24,7 @@ import pickle
 import sqlite3
 import zlib
 import binascii
-import sstables3
-
-
-CRC_INIT = zlib.crc32("") & 0xffffffffL
+from sstables3 import *
 
 
 def main():
