@@ -35,6 +35,7 @@ def main():
   parser = OptionParser(usage='%prog [options] <bucket> <prefix> <path> <sqlite_db>')
   parser.add_option('-k', '--aws-key', dest='aws_key', default=None)
   parser.add_option('-s', '--aws-secret', dest='aws_secret', default=None)
+  parser.add_option('--resume', action='store_true', dest='resume', default=False)
   # TODO - if ignoring compacted files, don't upload them nor put them in the manifest files
   # parser.add_option('--ignore-compacted', action='store_true', dest='ignore_compacted', default=False)
   options, args = parser.parse_args()
@@ -49,9 +50,13 @@ def main():
   sqlite = args[3]
   aws_key = options.aws_key
   aws_secret = options.aws_secret
+  resume = options.resume
   
   wrapper = SSTableS3(aws_key, aws_secret, bucket, prefix)
   wrapper.init_sqlite(sqlite)
+  if not resume:
+    wrapper.cancel_pending_uploads()
+    
   wrapper.sync_to_bucketPath(path)
 
 if __name__ == '__main__':

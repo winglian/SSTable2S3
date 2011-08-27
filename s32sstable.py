@@ -35,6 +35,7 @@ def main():
   parser.add_option('-k', '--aws-key', dest='aws_key', default=None)
   parser.add_option('-s', '--aws-secret', dest='aws_secret', default=None)
   parser.add_option('--restore-compacted', action='store_true', dest='restore_compacted', default=False)
+  parser.add_option('--delete', action='store_true', dest='delete', default=False)
   options, args = parser.parse_args()
 
   aws_key = options.aws_key
@@ -72,30 +73,12 @@ def main():
   # parse the manifests
   manifest_files = manifest_data['files']
   manifest_files.sort()
-  
-  compacted_list = []
-  # figure out the compacted files prefixes
-  for _filename in manifest_files:
-    if (_filename.endswith('-Compacted')):
-      str_idx = _filename.rfind('-Compacted')
-      compacted_list.append(_filename[0:str_idx+1])
 
-  
-  filtered_files = []
-  
   if (restore_compacted == True):
     filtered_files = manifest_files
   else:
-    # now loop through the compacted file prefixes and remove all the files related to the campacted sstables
-    for _filename in manifest_files:
-      found_match = False
-      for file_prefix in compacted_list:
-        if file_prefix in _filename:
-          found_match = True
-          break
-      if not found_match:
-        filtered_files.append(_filename)
-  
+    filtered_files = wrapper.filterCompactedFiles(manifest_files)
+      
   paths = []
   for _filename in filtered_files:
     # strip filename to last slash '/'
@@ -126,6 +109,7 @@ def main():
   # copy down each file to a tmp directory
   # gunzip each file into the appropriate directories
   # set the correct permissions
+  # delete files that aren't in manifest if 
   
 if __name__ == '__main__':
   sys.exit(main())

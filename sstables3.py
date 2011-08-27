@@ -187,13 +187,14 @@ class MultiPartFileUploader():
         return mpu
     return False
 
-  def getMissingParts(self):
+  def getMissingParts(self, initial=True):
     # stat the file size so we know how many parts we need
     file_size = self.fstats.st_size
     self.part_count = int(max(math.ceil(file_size / float(self.chunk_size)), 1))
     self.missing_part_ids = range(1,self.part_count+1)
     for uploaded_part in self.mpu.__iter__():
-      sys.stderr.write(time.asctime() + ": " + self.key_name + " part " + str(uploaded_part.part_number) + " already uploaded with size " + str(uploaded_part.size) + "bytes\n")
+      if initial:
+        sys.stderr.write(time.asctime() + ": " + self.key_name + " part " + str(uploaded_part.part_number) + " already uploaded with size " + str(uploaded_part.size) + "bytes\n")
       self.missing_part_ids.remove(uploaded_part.part_number)
     return self.missing_part_ids
   
@@ -296,7 +297,7 @@ class MultiPartFileUploader():
         self.uploadPart(part_num)
       sys.stderr.write(time.asctime() + ": COMPLETED uploading part " + str(part_num) + "/" + str(self.part_count) + " for " + self.key_name + "\n")
     # recheck all the parts again before completing the upload
-    missing_part_ids2 = self.getMissingParts()
+    missing_part_ids2 = self.getMissingParts(False)
     if len(missing_part_ids2)==0:
       self.mpu.complete_upload()
     else:
@@ -330,10 +331,13 @@ class SSTableS3(object):
         sys.stderr.write("Canceling multipart upload for " + mpu.key_name + "\n")
         mpu.cancel_upload()
     sys.stderr.write("COMPLETED canceling outstanding multipart uploads\n")
+    c = self.sqlite_connection.cursor()
+    c.execute('''DELETE FROM multipartuploads''')
+    self.sqlite_connection.commit()
+    sys.stderr.write("TRUNCATE multipartuploads\n")
     time.sleep(5)
 
-
-  def sync_to_bucketPath(self, path):
+  def sync_to_bucketPath(self, path, ignore_compacted=False):
     manifest = self.createPathManifest(path)
     manifest.sort()
     sys.stderr.write(str(len(manifest)) + " files in manifest\n")
@@ -442,4 +446,27 @@ class SSTableS3(object):
     key_obj.get_contents_to_file(d)
     d.close()
     
+  
+  def filterCompactedFiles(self, files):
+    files.sort()
+    compacted_list = []
+
+    # figure out the compacted files prefixes
+    for _filename in files:
+      if (_filename.endswith('-Compacted')):
+        str_idx = _filename.rfind('-Compacted')
+        compacted_list.append(_filename[0:str_idx+1])
     
+    filtered_files = []
+    
+    # now loop through the compacted file prefixes and remove all the files related to the campacted sstables
+    for _filename in files:
+      found_match = False
+      for file_prefix in compacted_list:
+        if file_prefix in _filename:
+          found_match = True
+          break
+      if not found_match:
+        filtered_files.append(_filename)
+    
+    return filtered_files
