@@ -62,9 +62,12 @@ class StreamCompressor:
 class StreamDecompressor:
   def __init__(self, filepath):
     self.decompressor = False
-    self.file_obj = open(filepath, 'w')
+    self.file_obj = False
+    self.filepath = filepath
   
   def write(self, b):
+    if not self.file_obj:
+      self.file_obj = open(self.filepath, 'w')
     if not self.decompressor:
       self.decompressor = zlib.decompressobj(16+zlib.MAX_WBITS)
     fd = self.decompressor.decompress(b)
