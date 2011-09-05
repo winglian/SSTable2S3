@@ -26,6 +26,7 @@ import binascii
 import re
 from sstables3 import *
 
+MAX_THREADS = 4
 
 def main():
   # fix for http://bugs.python.org/issue7980 with strptime
@@ -93,19 +94,39 @@ def main():
     if not os.path.exists(fullpath):
       os.makedirs(fullpath)
   
+    
+#     for f in manifest:
+#       while True:
+#         if threading.activeCount() < MAX_THREADS:
+#           self.thread_wait = 0.015625
+#           # sys.stderr.write("starting new thread for " + f + " with " + str(threading.activeCount()) + "/" + str(MAX_THREADS) + " threads running\n")
+#           t = Thread(target=self.syncFileS3, args=(path, f))
+#           t.setDaemon(True)
+#           t.start()
+#           threadlist.append(t)
+#           break
+#         else:
+#           # sys.stderr.write("sleeping for " + str(self.thread_wait) + " seconds with " + str(threading.activeCount()) + "/" + str(MAX_THREADS) + " threads running\n")
+#           self.thread_wait = min(self.thread_wait * 2, 60);
+#           time.sleep(self.thread_wait)
+#     for t in threadlist:
+#       t.join()
   
   # see what files already exist locally in the path
+  threadlist = []
   for _filename in filtered_files:
     fullpath = os.path.join(target_path, _filename)
+    key = prefix
+    if not prefix.endswith('/'):
+      key = key + '/'
+    key = key + _filename + '.gz'
     if os.path.exists(fullpath):
       print fullpath + ' already exists.. .skipping'
     else:
       print 'downloading ' + _filename + ' to ' + fullpath
-      key = prefix
-      if not prefix.endswith('/'):
-        key = key + '/'
-      key = key + _filename + '.gz'
       wrapper.downloadGzipFile(key, fullpath)
+      wrapper.updateFileMtimeFromS3(key, fullpath)
+      
   # copy down each file to a tmp directory
   # gunzip each file into the appropriate directories
   # set the correct permissions

@@ -382,7 +382,7 @@ class SSTableS3(object):
       s3_size = s3_key.size
       local_size = local_fstat.st_size
       # if local_datetime >= s3_datetime or s3_size != local_size:
-      if local_datetime >= s3_datetime:
+      if local_datetime > s3_datetime:
         self.uploadFileS3(filepath, keyname, True)
     else:
       self.uploadFileS3(filepath, keyname, True)    
@@ -448,7 +448,13 @@ class SSTableS3(object):
     d = StreamDecompressor(filepath)
     key_obj.get_contents_to_file(d)
     d.close()
-    
+  
+  def updateFileMtimeFromS3(self, key, filepath):
+    key_obj = self.bucket_obj.get_key(key)
+    s3_datetime = datetime.datetime(*time.strptime(key_obj.last_modified, '%a, %d %b %Y %H:%M:%S %Z')[0:6])
+    mtime = (s3_datetime - datetime.datetime(1970, 1, 1)).total_seconds()
+    # set the atime and mtime of the local file to the mtime of the s3 object
+    os.utime(filepath, (mtime, mtime))
   
   def filterCompactedFiles(self, files):
     files.sort()
