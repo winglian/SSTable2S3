@@ -344,7 +344,7 @@ class SSTableS3(object):
     manifest = self.createPathManifest(path)
     manifest.sort()
     if (ignore_compacted == True):
-      filtered_manifest = wrapper.filterCompactedFiles(manifest)
+      filtered_manifest = self.filterCompactedFiles(manifest)
     else:
       filtered_manifest = manifest
     sys.stderr.write(str(len(filtered_manifest)) + " files in manifest\n")
