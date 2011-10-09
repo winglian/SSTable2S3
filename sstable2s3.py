@@ -51,6 +51,7 @@ def main():
   aws_key = options.aws_key
   aws_secret = options.aws_secret
   resume = options.resume
+  ignore_compacted = options.ignore_compacted
   
   wrapper = SSTableS3(aws_key, aws_secret, bucket, prefix)
   wrapper.init_sqlite(sqlite)
