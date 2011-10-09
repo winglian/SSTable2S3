@@ -37,7 +37,7 @@ def main():
   parser.add_option('-s', '--aws-secret', dest='aws_secret', default=None)
   parser.add_option('--resume', action='store_true', dest='resume', default=False)
   # TODO - if ignoring compacted files, don't upload them nor put them in the manifest files
-  # parser.add_option('--ignore-compacted', action='store_true', dest='ignore_compacted', default=False)
+  parser.add_option('--ignore-compacted', action='store_true', dest='ignore_compacted', default=False)
   options, args = parser.parse_args()
 
   if len(args) < 4:
@@ -57,7 +57,7 @@ def main():
   if not resume:
     wrapper.cancel_pending_uploads()
     
-  wrapper.sync_to_bucketPath(path)
+  wrapper.sync_to_bucketPath(path, ignore_compacted)
 
 if __name__ == '__main__':
   sys.exit(main())

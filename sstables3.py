@@ -343,12 +343,16 @@ class SSTableS3(object):
   def sync_to_bucketPath(self, path, ignore_compacted=False):
     manifest = self.createPathManifest(path)
     manifest.sort()
-    sys.stderr.write(str(len(manifest)) + " files in manifest\n")
+    if (ignore_compacted == True):
+      filtered_manifest = wrapper.filterCompactedFiles(manifest)
+    else:
+      filtered_manifest = manifest
+    sys.stderr.write(str(len(filtered_manifest)) + " files in manifest\n")
     ts = time.time()
     key = self.bucket_obj.new_key('%s/manifests/%s-%s.manifest.json' % (self.key_prefix, socket.getfqdn(), ts))
-    key.set_contents_from_string(json.dumps({'files': manifest, 'path': path, 'prefix': self.key_prefix, 'hostname': socket.getfqdn(), 'timestamp': ts}))
+    key.set_contents_from_string(json.dumps({'files': filtered_manifest, 'path': path, 'prefix': self.key_prefix, 'hostname': socket.getfqdn(), 'timestamp': ts}))
     threadlist = []
-    for f in manifest:
+    for f in filtered_manifest:
       while True:
         if threading.activeCount() < MAX_THREADS:
           self.thread_wait = 0.015625
